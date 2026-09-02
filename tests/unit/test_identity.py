@@ -29,7 +29,19 @@ def test_ancestors_are_sorted_so_acquisition_order_is_deterministic() -> None:
 
 
 def test_path_traversal_and_injection_rejected() -> None:
-    for evil in ["../admin", "a/b", "tenant/x", "", "a" * 65, "acme\n", " acme", "acme\r", "acme\t", "acme\x00", "\nacme"]:
+    for evil in [
+        "../admin",
+        "a/b",
+        "tenant/x",
+        "",
+        "a" * 65,
+        "acme\n",
+        " acme",
+        "acme\r",
+        "acme\t",
+        "acme\x00",
+        "\nacme",
+    ]:
         with pytest.raises(IdentityError):
             Principal(evil, "agent", "run")
 
