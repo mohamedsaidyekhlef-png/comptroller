@@ -467,7 +467,7 @@ See [DESIGN.md](DESIGN.md) for the full contract.
 
 ## Status
 
-Commit 1 of roughly 8. Not usable yet, and not production software.
+Commit 2 of roughly 8. Not usable yet, and not production software.
 
 Building in public, foundations first. What exists today is the frozen type
 
@@ -521,7 +521,7 @@ flowchart LR
 
 - [x] `Principal`, credential-derived identity, boundary enforced by a CI test
 
-- [ ] `Intent`, `Estimate`, `Decision` union, reason codes
+- [x] `Intent`, `Estimate`, `Decision` union, reason codes
 
 - [ ] Atomic hierarchical reservation on Postgres
 
