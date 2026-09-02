@@ -9,4 +9,7 @@ typecheck:
 	mypy
 test:
 	pytest -q
-check: lint typecheck test
+check: lint typecheck test docs
+
+docs:
+	mdformat --check --wrap no README.md DESIGN.md
