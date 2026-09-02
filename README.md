@@ -6,7 +6,7 @@
 
 
 
-\*\*A deterministic economic authorization layer for autonomous AI agents.\*\*
+A deterministic economic authorization layer for autonomous AI agents.
 
 
 
@@ -17,10 +17,6 @@
 !\[license](https://img.shields.io/badge/license-MIT-green)
 
 !\[status](https://img.shields.io/badge/status-early%20development-orange)
-
-
-
-\*Not cost monitoring. Not another LLM proxy. An authorization primitive.\*
 
 
 
@@ -36,11 +32,17 @@ Comptroller answers one question, before the money moves:
 
 
 
-> \*\*Is \_this\_ principal permitted to incur \_this\_ cost, \_right now\_?\*\*
+> Is \*this\* principal permitted to incur \*this\* cost, \*right now\*?
 
 
 
-\## The problem
+Not cost monitoring, and not another LLM proxy. It is an authorization
+
+primitive.
+
+
+
+\## Problem
 
 
 
@@ -58,11 +60,11 @@ endpoint repeatedly, then purchase the $299 dataset.
 
 
 
-Your dashboard will show you the damage. Tomorrow.
+Your dashboard will show you the damage tomorrow.
 
 
 
-Existing AI gateways enforce spend \*\*after\*\* the provider responds: cost is read
+Existing AI gateways enforce spend after the provider responds: cost is read
 
 from the usage block in the reply, then the budget is decremented. The request
 
@@ -136,7 +138,7 @@ sequenceDiagram
 
 
 
-\## One primitive, every kind of spend
+\## Scope of governed actions
 
 
 
@@ -206,7 +208,7 @@ flowchart LR
 
 
 
-Budgets are hierarchical. A single authorization must satisfy \*\*every\*\* level,
+Budgets are hierarchical. A single authorization must satisfy every level,
 
 atomically, or nothing is reserved at all.
 
@@ -240,13 +242,173 @@ flowchart TD
 
 
 
-Rows are acquired in canonical sorted scope order, which \*\*prevents\*\* deadlock
+Rows are acquired in canonical sorted scope order, which prevents deadlock
 
 rather than detecting it.
 
 
 
-\## Guaranteed properties
+\## Install
+
+
+
+Requires Python 3.12 or newer.
+
+
+
+```bash
+
+git clone https://github.com/mohamedsaidyekhlef-png/comptroller.git
+
+cd comptroller
+
+
+
+python3.12 -m venv .venv
+
+source .venv/bin/activate          # Windows: .\\.venv\\Scripts\\Activate.ps1
+
+
+
+pip install -e ".\[dev]"
+
+```
+
+
+
+Run the full gate, exactly what CI runs:
+
+
+
+```bash
+
+make check                         # Windows: .\\check.ps1
+
+```
+
+
+
+Or each stage on its own:
+
+
+
+```bash
+
+ruff format src tests              # formatter
+
+ruff check src tests               # lint
+
+mypy                               # strict type check
+
+pytest -q                          # tests
+
+pytest -q -p no:randomly -v        # verbose, stable order
+
+```
+
+
+
+\## What runs today
+
+
+
+Only the frozen core types. There is no authorization engine yet. Everything
+
+below works right now against a fresh clone:
+
+
+
+```python
+
+from comptroller.core.money import Money, CurrencyMismatch
+
+from comptroller.core.identity import Principal, IdentityError
+
+
+
+\# Exact arithmetic in integer micros: 10^-6 of a currency unit.
+
+price = Money.parse("0.62", "USD")
+
+print(price.micros)                 # 620000
+
+print(price)                        # 0.620000 USD
+
+
+
+\# Safety factor applied to an estimate, rounded half-up, never a float.
+
+print(price \* "1.15")               # 0.713000 USD
+
+
+
+\# Sub-cent amounts survive, which is why cents were not used.
+
+print(Money.parse("0.000001", "USD").micros)   # 1
+
+
+
+\# Mixed currencies raise instead of silently coercing.
+
+try:
+
+&#x20;   Money.parse("1", "USD") + Money.parse("1", "EUR")
+
+except CurrencyMismatch as e:
+
+&#x20;   print("refused:", e)            # refused: cannot combine USD with EUR
+
+
+
+\# Identity comes from a verified credential, never from a request payload.
+
+p = Principal.from\_credential(
+
+&#x20;   {"tenant": "acme", "agent": "researcher"}, run\_id="7f3a"
+
+)
+
+print(p.scope\_path)
+
+\# tenant/acme/agent/researcher/run/7f3a
+
+
+
+\# Every budget scope this principal is subject to, root first and sorted,
+
+\# which is the order reservations acquire locks in.
+
+for scope in p.ancestors():
+
+&#x20;   print(scope)
+
+\# tenant/acme
+
+\# tenant/acme/agent/researcher
+
+\# tenant/acme/agent/researcher/run/7f3a
+
+
+
+\# Injection in an identity segment is rejected outright.
+
+try:
+
+&#x20;   Principal.from\_credential({"tenant": "../admin", "agent": "x"}, run\_id="r")
+
+except IdentityError as e:
+
+&#x20;   print("refused:", e)            # refused: invalid tenant segment: '../admin'
+
+```
+
+
+
+Save that as `try\_it.py` and run `python try\_it.py`.
+
+
+
+\## Guarantees
 
 
 
@@ -254,21 +416,21 @@ In `STRICT` mode, for every action that passes an enforcement point:
 
 
 
-\*\*P1 — Authorization precedence.\*\* Every `CAPTURE` has a prior `ALLOW`
+P1, authorization precedence. Every `CAPTURE` has a prior `ALLOW` authorization
 
-authorization \*for that same hold\*, at a strictly lower ledger sequence, and at
+for that same hold, at a strictly lower ledger sequence, and at most one capture
 
-most one capture per hold, ever. This is per-intent, not an aggregate: it is not
+per hold, ever. This is per-intent, not an aggregate: it is not enough that
 
-enough that total captures stay under total authorizations.
+total captures stay under total authorizations.
 
 
 
-\*\*P2 — Budget safety.\*\* For every scope and window, `spent + reserved <= cap`,
+P2, budget safety. For every scope and window, `spent + reserved <= cap`, at
 
-at every instant, under arbitrary interleaving. Not enforced in application
+every instant, under arbitrary interleaving. This is not enforced in application
 
-code — enforced by the database:
+code. It is enforced by the database:
 
 
 
@@ -286,13 +448,19 @@ A buggy service cannot violate it. The transaction simply aborts.
 
 
 
-\*\*P3 — Conservation.\*\* Every hold reaches exactly one terminal state, and
+P3, conservation. Every hold reaches exactly one terminal state, and
 
-`captured + released <= held`. No hold leaks reservation, none resolves twice.
+`captured + released <= held`. No hold leaks reservation, and none resolves
+
+twice.
 
 
 
-\### Two-phase spend, like a card hold
+\## Hold lifecycle
+
+
+
+Estimates are wrong, so spend is two-phase, like a card hold.
 
 
 
@@ -320,19 +488,13 @@ stateDiagram-v2
 
 
 
-Every reaped hold raises an alarm: it means an enforcement point died without
+Every reaped hold raises an alarm, because it means an enforcement point died
 
-cleaning up. That is a bug signal, not routine operation.
-
-
-
-\### The one bounded exception, made explicit
+without cleaning up. That is a bug signal, not routine operation.
 
 
 
-Actual cost can exceed the estimate — a stream runs long, a provider reprices
-
-mid-flight. Refusing to record reality is not an option, so capture splits:
+When actual cost exceeds the hold, capture splits rather than breaking P2:
 
 
 
@@ -346,13 +508,13 @@ overage\_micros += GREATEST(0, actual - held)
 
 
 
-`overage` sits \*\*outside\*\* the P2 constraint. P2 therefore stays \*exactly\* true,
+`overage` sits outside the P2 constraint, so P2 stays exactly true and overage
 
-and overage becomes a first-class alarmable quantity that is, by construction,
+becomes an alarmable quantity that is by construction attributable to estimation
 
-attributable to estimation error on an already-authorized intent — never to an
+error on an already-authorized intent, never to an unauthorized action. Realized
 
-unauthorized action. Realized cost is `spent + overage`.
+cost is `spent + overage`.
 
 
 
@@ -360,7 +522,7 @@ unauthorized action. Realized cost is `spent + overage`.
 
 
 
-The adversary is \*\*your own agent\*\*, compromised by injected content.
+The adversary is your own agent, compromised by injected content.
 
 
 
@@ -398,7 +560,7 @@ flowchart LR
 
 | "Ignore your budget" in a prompt    | No model sits in the authorization path            |
 
-| Retry storm / runaway loop          | Fingerprint repeat + velocity rules                |
+| Retry storm or runaway loop         | Fingerprint repeat and velocity rules              |
 
 | Mandate replay                      | `jti` burned in the ledger on use                  |
 
@@ -408,69 +570,69 @@ flowchart LR
 
 | Report poisoning                    | Reporting reads aggregated facts, not transcripts  |
 
-| Bypassing the proxy entirely        | \*\*Not prevented.\*\* Detected at reconciliation.     |
+| Bypassing the proxy entirely        | Not prevented. Detected at reconciliation.         |
 
 
 
-That last row is the honest one. These properties hold for \*\*mediated\*\* actions.
+That last row is the important one. These properties hold for mediated actions.
 
 An agent with direct network egress and its own provider key is outside the
 
-guarantee; prevention requires egress policy Comptroller does not own.
+guarantee, and prevention there requires egress policy Comptroller does not own.
 
 
 
-\## Design decisions worth arguing about
+\## Design notes
 
 
 
-\*\*No LLM in the enforcement path.\*\* A model that reasons about whether to
+No LLM sits in the enforcement path. A model that reasons about whether to
 
 approve a spend is precisely the component an attacker will talk to. Enforcement
 
 is declarative and deterministic. The reporting layer is read-only and may only
 
-\*propose\* policy diffs for a human to merge.
+propose policy diffs for a human to merge.
 
 
 
-\*\*DENY and ESCALATE are return values, not exceptions.\*\* Exceptions get
+`DENY` and `ESCALATE` are return values, not exceptions. Exceptions get
 
-swallowed by wrapper code; a returned union forces every caller's type checker
+swallowed by wrapper code, whereas a returned union forces every caller's type
 
-to handle every branch. Only engine faults raise, and in `STRICT` mode a fault
+checker to handle every branch. Only engine faults raise, and in `STRICT` mode a
 
-is treated as `DENY`.
+fault is treated as `DENY`.
 
 
 
-\*\*Policy rules can only deny or escalate.\*\* `ALLOW` is the absence of a rule.
+Policy rules can only deny or escalate. `ALLOW` is the absence of a rule, so
 
-There is no way to write a rule that \*grants\* permission, and no priority field,
+there is no way to write a rule that grants permission and no priority field,
 
 which removes an entire class of rule-ordering exploit.
 
 
 
-\*\*No floats, anywhere.\*\* Integer micros, 10^-6 currency units. LLM pricing is
+There are no floats anywhere. Integer micros throughout, because LLM pricing is
 
-sub-cent; cents accumulate drift that surfaces as unexplainable reconciliation
+sub-cent and cents accumulate drift that later surfaces as unexplainable
 
-error. Cross-currency arithmetic raises rather than coercing.
+reconciliation error.
 
 
 
-\*\*READ COMMITTED is sufficient for reservation.\*\* The predicate references only
+`READ COMMITTED` is sufficient for reservation. The predicate references only
 
 the row being updated, and Postgres re-evaluates the `WHERE` clause after a lock
 
-wait, so the losing transaction sees the winner and correctly fails. No
+wait, so the losing transaction sees the winner and correctly fails. There is no
 
-lost-update window, no cost of `SERIALIZABLE`.
+lost-update window, and no need to pay for `SERIALIZABLE`.
 
 
 
-See \*\*\[DESIGN.md](DESIGN.md)\*\* for the full contract.
+See \[DESIGN.md](DESIGN.md) for the full contract.
 
 
 
@@ -478,13 +640,15 @@ See \*\*\[DESIGN.md](DESIGN.md)\*\* for the full contract.
 
 
 
-> \*\*Commit 1 of \~8. Not usable yet. Not production software.\*\*
+Commit 1 of roughly 8. Not usable yet, and not production software.
 
 
 
 Building in public, foundations first. What exists today is the frozen type
 
-surface everything else binds to — the parts that are expensive to change later.
+surface everything else binds to, which is the part that is expensive to change
+
+later.
 
 
 
@@ -534,11 +698,11 @@ flowchart LR
 
 
 
-\- \[x] `Money` — exact integer-micros arithmetic, no float path
+\- \[x] `Money`, exact integer-micros arithmetic with no float path
 
-\- \[x] `Principal` — credential-derived identity, boundary enforced by a CI test
+\- \[x] `Principal`, credential-derived identity, boundary enforced by a CI test
 
-\- \[ ] `Intent` / `Estimate` / `Decision` union / reason codes
+\- \[ ] `Intent`, `Estimate`, `Decision` union, reason codes
 
 \- \[ ] Atomic hierarchical reservation on Postgres
 
@@ -546,35 +710,33 @@ flowchart LR
 
 \- \[ ] Deterministic policy engine with JSON Schema
 
-\- \[ ] Hash-chained ledger + `verify-chain` CLI
+\- \[ ] Hash-chained ledger and `verify-chain` CLI
 
-\- \[ ] OpenAI / Anthropic proxy, MCP interceptor
+\- \[ ] OpenAI and Anthropic proxy, MCP interceptor
 
 \- \[ ] Ed25519 mandates with intent binding
 
 
 
-\### Planned demos
+Planned demos, which are the actual deliverable. No numbers are published here
+
+until the demos run in CI and generate them, so this README cannot drift from
+
+reality.
 
 
 
-These are the deliverable. \*\*No numbers are published here until the demos run
+1\. A prompt-injected agent. A malicious page instructs a retry storm plus a $299
 
-in CI and generate them\*\*, so this README cannot drift from reality.
+&#x20;  purchase. Expected: loop broken, purchase escalated, human rejects,
 
+&#x20;  unauthorized spend $0.00.
 
+2\. One hundred concurrent agents against a single $10 budget. Expected: zero
 
-1\. \*\*Prompt-injected agent.\*\* A malicious page instructs a retry storm plus a
+&#x20;  budget violations, with authorized, captured and released reported, and the
 
-&#x20;  $299 purchase. Expected: loop broken, purchase escalated, human rejects,
-
-&#x20;  unauthorized spend `$0.00`.
-
-2\. \*\*100 concurrent agents, one $10 budget.\*\* Expected: budget violations `$0`,
-
-&#x20;  with authorized / captured / released reported and the P2 constraint never
-
-&#x20;  tripped.
+&#x20;  P2 constraint never tripped.
 
 
 
@@ -594,21 +756,13 @@ canonical scope path, poisoning logs and ledger rows. Anchors are now `\\A` and
 
 
 
-\## Requirements
+\## Contributing
 
 
 
-Python 3.12+
+Not accepting contributions yet, since the core interfaces are still being
 
-
-
-```bash
-
-pip install -e ".\[dev]"
-
-pytest -q          # or: make check   /   .\\check.ps1 on Windows
-
-```
+frozen. Issues pointing out flaws in the guarantees above are very welcome.
 
 
 
@@ -616,7 +770,7 @@ pytest -q          # or: make check   /   .\\check.ps1 on Windows
 
 
 
-MIT — see \[LICENSE](LICENSE).
+MIT, see \[LICENSE](LICENSE).
 
 
 
