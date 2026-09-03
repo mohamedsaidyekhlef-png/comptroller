@@ -1,0 +1,40 @@
+[1mdiff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml[m
+[1mindex 6dac78e..a97c92b 100644[m
+[1m--- a/.github/workflows/ci.yml[m
+[1m+++ b/.github/workflows/ci.yml[m
+[36m@@ -1,12 +1,30 @@[m
+ name: ci[m
+ on: [push, pull_request][m
+ jobs:[m
+[31m-  check:[m
+[32m+[m[32m  test:[m
+     runs-on: ubuntu-latest[m
+[32m+[m[32m    services:[m
+[32m+[m[32m      db:[m
+[32m+[m[32m        image: postgres:17[m
+[32m+[m[32m        env:[m
+[32m+[m[32m          POSTGRES_USER: comptroller[m
+[32m+[m[32m          POSTGRES_PASSWORD: comptroller[m
+[32m+[m[32m          POSTGRES_DB: comptroller[m
+[32m+[m[32m        ports: ['5432:5432'][m
+[32m+[m[32m        options: >-[m
+[32m+[m[32m          --health-cmd "pg_isready -U comptroller"[m
+[32m+[m[32m          --health-interval 5s --health-timeout 5s --health-retries 20[m
+[32m+[m[32m    env:[m
+[32m+[m[32m      COMPTROLLER_DSN: postgresql://comptroller:comptroller@localhost:5432/comptroller[m
+[32m+[m[32m      COMPTROLLER_REQUIRE_DB: "1"[m
+     steps:[m
+       - uses: actions/checkout@v4[m
+       - uses: actions/setup-python@v5[m
+         with:[m
+[31m-          python-version: "3.12"[m
+[32m+[m[32m          python-version: '3.12'[m
+       - run: pip install -e ".[dev]"[m
+[31m-      - run: make check[m
+\ No newline at end of file[m
+[32m+[m[32m      - run: ruff format --check src tests[m
+[32m+[m[32m      - run: ruff check src tests[m
+[32m+[m[32m      - run: mypy[m
+[32m+[m[32m      - run: mdformat --check --wrap no README.md DESIGN.md[m
+[32m+[m[32m      - run: pytest -q[m
+\ No newline at end of file[m

@@ -1,12 +1,26 @@
 name: ci
 on: [push, pull_request]
 jobs:
-  check:
+  test:
     runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:17
+        env:
+          POSTGRES_USER: comptroller
+          POSTGRES_PASSWORD: comptroller
+          POSTGRES_DB: comptroller
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U comptroller"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      COMPTROLLER_DSN: postgresql://comptroller:comptroller@localhost:5432/comptroller
+      COMPTROLLER_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
       - run: pip install -e ".[dev]"
       - run: make check
