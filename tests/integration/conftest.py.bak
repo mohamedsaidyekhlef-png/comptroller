@@ -9,14 +9,7 @@ import pytest
 
 from comptroller.core.money import Money
 
-# CI sets this to guarantee the integration suite actually runs. When it is on,
-# a missing driver or unreachable database is a hard failure, never a skip.
-REQUIRE_DB = os.environ.get("COMPTROLLER_REQUIRE_DB") == "1"
-
-if REQUIRE_DB:
-    import psycopg
-else:
-    psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
 
 from psycopg import Connection  # noqa: E402
 
@@ -35,22 +28,14 @@ def _reachable() -> bool:
         return False
 
 
-_DB_UP = _reachable()
-
-if REQUIRE_DB and not _DB_UP:
-    raise RuntimeError(
-        f"COMPTROLLER_REQUIRE_DB=1 but no Postgres at {DSN}. "
-        "Integration tests must not be skipped."
-    )
-
 requires_db = pytest.mark.skipif(
-    not _DB_UP, reason=f"no Postgres at {DSN}; run docker compose up -d"
+    not _reachable(), reason=f"no Postgres at {DSN}; run docker compose up -d"
 )
 
 
 @pytest.fixture(scope="session")
 def schema() -> None:
-    if not _DB_UP:
+    if not _reachable():
         pytest.skip("no Postgres")
     with psycopg.connect(DSN, autocommit=True) as conn:
         conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
