@@ -343,49 +343,54 @@ def capture(
         cur = conn.cursor(row_factory=dict_row)
         cur.execute(
             """
-            WITH prev AS (
-                SELECT hold_id, state, held_micros, currency, debited
-                FROM hold WHERE hold_id = %s FOR UPDATE
-            )
-            UPDATE hold h
-            SET state = 'CAPTURED',
-                captured_micros = LEAST(%s, prev.held_micros),
-                overage_micros  = GREATEST(0, %s - prev.held_micros),
-                resolved_at = now()
-            FROM prev
-            WHERE h.hold_id = prev.hold_id
-              AND prev.state IN ('PENDING', 'EXPIRED')
-            RETURNING prev.state::text AS prev_state, prev.held_micros,
-                      prev.currency, prev.debited,
-                      h.captured_micros, h.overage_micros
+            SELECT state::text AS state, held_micros, currency,
+                   debited, captured_micros, overage_micros
+            FROM hold WHERE hold_id = %s FOR UPDATE
             """,
-            (hold_id, actual.micros, actual.micros, hold_id),
+            (hold_id,),
         )
-        row = cur.fetchone()
+        locked = cur.fetchone()
+        if locked is None:
+            raise StoreError(f"no such hold {hold_id}")
 
-        if row is None:
-            done = conn.cursor(row_factory=dict_row)
-            done.execute(
-                """
-                SELECT state::text AS state, captured_micros, overage_micros, currency
-                FROM hold WHERE hold_id = %s
-                """,
-                (hold_id,),
-            )
-            existing = done.fetchone()
-            if existing is None:
-                raise StoreError(f"no such hold {hold_id}")
-            if str(existing["state"]) != "CAPTURED":
-                raise StoreError(
-                    f"hold {hold_id} is {existing['state']}, capture would break P3"
-                )
-            currency = str(existing["currency"])
+        currency = str(locked["currency"])
+        state = str(locked["state"])
+
+        if state == "CAPTURED":
             return CaptureResult(
                 hold_id=hold_id,
-                captured=money_from_micros(int(existing["captured_micros"]), currency),
-                overage=money_from_micros(int(existing["overage_micros"] or 0), currency),
+                captured=money_from_micros(int(locked["captured_micros"]), currency),
+                overage=money_from_micros(int(locked["overage_micros"] or 0), currency),
                 replayed=True,
             )
+        if state not in ("PENDING", "EXPIRED"):
+            raise StoreError(f"hold {hold_id} is {state}, capture would break P3")
+
+        held_micros = int(locked["held_micros"])
+        cur.execute(
+            """
+            UPDATE hold
+            SET state = 'CAPTURED',
+                captured_micros = LEAST(%s, held_micros),
+                overage_micros  = GREATEST(0, %s - held_micros),
+                resolved_at = now()
+            WHERE hold_id = %s
+            RETURNING captured_micros, overage_micros
+            """,
+            (actual.micros, actual.micros, hold_id),
+        )
+        written = cur.fetchone()
+        if written is None:  # pragma: no cover
+            raise StoreError(f"capture update lost hold {hold_id}")
+
+        row = {
+            "prev_state": state,
+            "held_micros": held_micros,
+            "currency": currency,
+            "debited": locked["debited"],
+            "captured_micros": int(written["captured_micros"]),
+            "overage_micros": int(written["overage_micros"] or 0),
+        }
 
         prev_state = str(row["prev_state"])
         held_micros = int(row["held_micros"])

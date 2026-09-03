@@ -48,7 +48,8 @@ def window(db: Connection[Any], scope: str) -> dict[str, int]:
         (scope,),
     )
     row = cur.fetchone()
-    assert row is not None
+    if row is None:
+        return {"spent": 0, "reserved": 0, "overage": 0}
     return {"spent": row[0], "reserved": row[1], "overage": row[2]}
 
 
