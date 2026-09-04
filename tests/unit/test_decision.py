@@ -80,7 +80,7 @@ def test_a_verdict_has_no_truth_value(verdict: Decision) -> None:
 def test_reason_codes_are_stable_wire_values() -> None:
     for code in ReasonCode:
         assert code.value == code.name
-    assert len(set(ReasonCode)) == 15
+    assert len(set(ReasonCode)) == 16
 
 
 def test_scopes_must_be_in_lock_order() -> None:

@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import Any
 
 import psycopg
+import pytest
 from psycopg import Connection
 
 from comptroller.core.decision import Allowed, Denied, ReasonCode
@@ -13,7 +14,13 @@ from comptroller.core.identity import Principal
 from comptroller.core.intent import Estimate, EstimateBasis, Intent, IntentKind, Resource
 from comptroller.core.money import Money
 from comptroller.store.invariants import assert_healthy, violations
-from comptroller.store.postgres import capture, reap_expired, release, reserve
+from comptroller.store.postgres import (
+    StoreError,
+    capture,
+    reap_expired,
+    release,
+    reserve,
+)
 
 from .conftest import DSN, requires_db
 
@@ -204,3 +211,47 @@ def test_hundred_agents_one_budget(db: Connection[Any], budget: Any) -> None:
     assert outcomes.count("Denied") == 60
     assert window(db, AGENT)["reserved"] == 10_000_000
     assert not violations(db)
+
+
+def test_replay_while_pending_returns_the_same_hold(db: Connection[Any], budget: Any) -> None:
+    """Authorising the same intent twice must not cut a second hold."""
+    budget(AGENT, "1.00")
+    intent = intent_for("0.40")
+
+    first = reserve(db, intent)
+    second = reserve(db, intent)
+
+    assert isinstance(first, Allowed)
+    assert isinstance(second, Allowed)
+    assert second.hold_id == first.hold_id
+    assert window(db, AGENT) == {"spent": 0, "reserved": 400_000, "overage": 0}
+
+
+def test_reauthorising_a_captured_intent_is_denied(db: Connection[Any], budget: Any) -> None:
+    """A resolved hold is not a licence to execute again."""
+    budget(AGENT, "1.00")
+    intent = intent_for("0.40")
+
+    allowed = reserve(db, intent)
+    assert isinstance(allowed, Allowed)
+    capture(db, allowed.hold_id, Money.parse("0.37", "USD"))
+
+    again = reserve(db, intent)
+    assert isinstance(again, Denied)
+    assert again.reason is ReasonCode.INTENT_ALREADY_RESOLVED
+    assert "CAPTURED" in again.detail
+    assert window(db, AGENT) == {"spent": 370_000, "reserved": 0, "overage": 0}
+    assert violations(db) == []
+
+
+def test_capture_refuses_a_foreign_currency(db: Connection[Any], budget: Any) -> None:
+    """Micros are meaningless without their currency."""
+    budget(AGENT, "1.00")
+    allowed = reserve(db, intent_for("0.40"))
+    assert isinstance(allowed, Allowed)
+
+    with pytest.raises(StoreError, match="cannot capture"):
+        capture(db, allowed.hold_id, Money.parse("0.37", "EUR"))
+
+    assert window(db, AGENT) == {"spent": 0, "reserved": 400_000, "overage": 0}
+    assert_healthy(db)

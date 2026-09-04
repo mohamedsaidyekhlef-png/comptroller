@@ -129,7 +129,7 @@ def _replay(conn: Connection[Any], intent_id: UUID) -> Allowed | None:
     cur.execute(
         """
         SELECT hold_id, held_micros, currency, policy_version,
-               created_at, expires_at, debited
+               created_at, expires_at, debited, state::text AS state
         FROM hold WHERE intent_id = %s
         """,
         (intent_id,),
@@ -137,6 +137,13 @@ def _replay(conn: Connection[Any], intent_id: UUID) -> Allowed | None:
     row = cur.fetchone()
     if row is None:
         return None
+    state = str(row["state"])
+    if state != "PENDING":
+        raise _Refuse(
+            ReasonCode.INTENT_ALREADY_RESOLVED,
+            f"intent already resolved: its hold is {state}, mint a fresh intent",
+            None,
+        )
     debited = cast(list[dict[str, str]], row["debited"])
     return Allowed(
         hold_id=HoldId(cast(UUID, row["hold_id"])),
@@ -355,6 +362,11 @@ def capture(
 
         currency = str(locked["currency"])
         state = str(locked["state"])
+
+        if actual.currency != currency:
+            raise StoreError(
+                f"refused: cannot capture {actual.currency} against a {currency} hold"
+            )
 
         if state == "CAPTURED":
             return CaptureResult(
